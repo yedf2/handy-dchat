@@ -10,8 +10,8 @@ void dconnectTo(EventBase* base, const char* argv[], int uid, int touid) {
     con->setCodec(new LineCodec);
     con->onState([=] (const TcpConnPtr& con) {
         if (con->getState() == TcpConn::Connected) {
-            ChatMsg loginMsg(ChatMsg::Login, uid, 0, "");
-            ChatMsg hello(ChatMsg::Chat, uid, touid, "hello");
+            ChatMsg loginMsg(ChatMsg::Login, 0, uid, 0, "");
+            ChatMsg hello(ChatMsg::Chat, 1, uid, touid, "hello");
             con->sendMsg(loginMsg.str());
             con->sendMsg(hello.str());
         } else if (con->getState() == TcpConn::Failed) {
@@ -23,8 +23,7 @@ void dconnectTo(EventBase* base, const char* argv[], int uid, int touid) {
     });
     con->onMsg([=](const TcpConnPtr& con, Slice msg){
         ChatMsg cmsg(msg);
-        info("msg: type %d fromid %ld toid %ld msg %s",
-            cmsg.type, cmsg.fromId, cmsg.toId, cmsg.data.c_str());
+        info("msg: type %d %s", cmsg.type, cmsg.str().c_str());
         if (cmsg.type == ChatMsg::Chat) {
             base->exit();
         }

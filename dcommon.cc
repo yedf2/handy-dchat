@@ -9,11 +9,11 @@ namespace handy {
 string ChatMsg::str() {
     switch (type) {
         case Chat:
-            return util::format("%ld#%ld#%s", fromId, toId, data.c_str());
+            return util::format("%ld#%ld#%ld#%s", msgId, fromId, toId, data.c_str());
         case Login:
             return util::format("%ld#", fromId);
         case Comment:
-            return data;
+            return "#"+data;
         case Unknow:
         case Empty:
         case Logout:
@@ -41,13 +41,14 @@ ChatMsg::ChatMsg(Slice line): ChatMsg() {
             fromId = util::atoi2(s0.begin(), s0.end());
             type = fromId >= 0 ? Login : Unknow;
         }
-    } else if (vs.size() == 3) {
-        Slice s0 = vs[0], s1 = vs[1], s2 = vs[2];
-        fromId = util::atoi2(s0.begin(), s0.end());
-        toId = util::atoi2(s1.begin(), s1.end());
+    } else if (vs.size() == 4) {
+        Slice s0 = vs[0], s1 = vs[1], s2 = vs[2], s3=vs[3];
+        msgId = util::atoi2(s0.begin(), s0.end());
+        fromId = util::atoi2(s1.begin(), s1.end());
+        toId = util::atoi2(s2.begin(), s2.end());
         if (fromId >= 0 && toId >= 0) {
             type = Chat;
-            data = s2;
+            data = s3;
         }
     }
     if (type == Unknow) {

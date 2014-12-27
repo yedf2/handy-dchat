@@ -1,6 +1,10 @@
 include ../config.mk
 
-SOURCES=dtest.cc proxy.cc
+CXXFLAGS+=-DTHREADED -I/usr/include/zookeeper
+
+LDFLAGS+=-lzookeeper_mt
+
+SOURCES=dtest.cc proxy.cc router.cc
 
 SHARED_SRCS=dcommon.cc
 
@@ -11,6 +15,10 @@ PROGRAMS = $(SOURCES:.cc=)
 default: $(PROGRAMS)
 
 $(PROGRAMS): $(LIBFILE) $(SHARED_OBJS)
+
+n:
+	make clean
+	make
 
 clean:
 	-rm -f $(PROGRAMS)
