@@ -3,8 +3,7 @@
 #include <vector>
 
 using namespace std;
-
-namespace handy {
+using namespace handy;
 
 string ChatMsg::str() {
     switch (type) {
@@ -56,6 +55,29 @@ ChatMsg::ChatMsg(Slice line): ChatMsg() {
     }
 }
 
+int zkNode::parse(Slice ln) {
+    vector<Slice> nodes = ln.split(':');
+    if (nodes.size() != 3) {
+        error("bad node format: %s", string(ln).c_str());
+        return -1;
+    }
+    server = string(ln.begin(), ln.size()-nodes[2].size()-1);
+    id = util::atoi2(nodes[2].begin(), nodes[2].end());
+    if (id < 0 || !zk_is_valid_server(server)) {
+        error("bad node format: %s", string(ln).c_str());
+        return EINVAL;
+    }
+    return 0;
+}
+
+bool zk_is_valid_server(Slice ln) {
+    vector<Slice> vs = ln.split(':');
+    if (vs.size() != 2 || util::atoi2(vs[1].begin(), vs[1].end()) <= 0) {
+        return false;
+    }
+    return true;
+}
+
 void zk_node_set_cb(int rc, const struct Stat *stat, const void *data) {
     info("node set rc: %d version: %d", rc, stat->version);
     exitif(rc, "zk_node_set_cb failed");
@@ -91,4 +113,3 @@ void zk_create_nodes(zhandle_t * zh, const char* path) {
     }
 }
 
-}

@@ -1,8 +1,8 @@
 #include <handy-fw.h>
 #include "dcommon.h"
 #include <map>
-#include <logging.h>
-#include <zookeeper.h>
+#include <algorithm>
+#include <limits>
 
 using namespace std;
 using namespace handy;
@@ -24,8 +24,10 @@ void notify_new_hash_table(EventBase* base, string hashtable, long version) {
     last_version = version;
 }
 
+
 int main(int argc, const char* argv[]) {
     Conf conf = handy_app_init(argc, argv);
+
     int port = conf.getInteger("", "port", 0);
     exitif(port <= 0, "port should be positive interger");
 
