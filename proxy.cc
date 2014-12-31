@@ -7,60 +7,7 @@
 using namespace std;
 using namespace handy;
 
-int zoo_awget(zhandle_t *zh, const char *path,
-                       watcher_fn watcher, void* watcherCtx,
-                       data_completion_t completion, const void *data);
-int zoo_aget(zhandle_t *zh, const char *path, int watch,
-                                  data_completion_t completion, const void *data);
-
-void zk_node_data(int rc, const char *value, int value_len, const struct Stat *stat, const void *data) {
-    if (rc == 0) {
-        EventBase* base = (EventBase*)data;
-        string v(value, value_len);
-        base->safeCall([v] { info("value %s from zk", v.c_str()); });
-    } else {
-        error("zk_node_data rc: %d value: %.*s", rc, value_len, value);
-    }
-}
-
-void zk_node_watcher(zhandle_t *zh, int type, int state, const char *path, void *ctx) {
-    int r = zoo_aget(zh, path, 1, zk_node_data, ctx);
-    exitif(r, "zoo_aget failed");
-}
-
-void zk_init_watcher(zhandle_t * zh, int type, int state,const char *path, void *ctx) {
-    info("zookeeper_init callback. type: %d state: %d", type, state);
-    //info("states: %d %d %d %d %d %d", ZOO_CREATED_EVENT
-    //    , ZOO_DELETED_EVENT, ZOO_CHANGED_EVENT, ZOO_CHILD_EVENT, ZOO_SESSION_EVENT, ZOO_NOTWATCHING_EVENT);
-    if (type == ZOO_SESSION_EVENT || type == ZOO_CHANGED_EVENT) {
-        if (state == ZOO_CONNECTED_STATE) {
-            info("connected to zookeeper successfully");
-            auto arg = (pair<EventBase*, string>*)ctx;
-            info("zoo_awget [%s]", arg->second.c_str());
-            int r = zoo_awget(zh, arg->second.c_str(), zk_node_watcher, arg->first, zk_node_data, arg->first);
-            exitif(r, "zoo_awget failed");
-        } else if (state == ZOO_EXPIRED_SESSION_STATE) {
-            info("zookeeper session expired");
-        }
-    }
-}
-FILE* zk_log;
-zhandle_t * zk_init(Conf& conf, EventBase* base, void* arg) {
-    string zk_hosts = conf.get("", "zk_hosts", "");
-    exitif(zk_hosts.empty(), "zk_hosts should be configured");
-    FILE* zk_log = fdopen(Logger::getLogger().getFd(), "a");
-    zoo_set_log_stream(zk_log);
-    int loglevel = Logger::getLogger().getLogLevel();
-    if (loglevel >= Logger::LDEBUG) {
-        zoo_set_debug_level(ZOO_LOG_LEVEL_DEBUG);
-    } else {
-        zoo_set_debug_level(ZOO_LOG_LEVEL_INFO);
-    }
-    zhandle_t *zh = zookeeper_init(zk_hosts.c_str(), zk_init_watcher,
-        10*1000, 0, arg, 0);
-    exitif(zh == NULL, "zookeeper_init failed");
-    return zh;
-}
+zhandle_t * zk_init(Conf& conf, EventBase* base, void* arg);
 
 int main(int argc, const char* argv[]) {
     Conf conf = handy_app_init(argc, argv);
@@ -70,11 +17,8 @@ int main(int argc, const char* argv[]) {
     map<long, TcpConnPtr> users; //生命周期比连接更长，必须放在Base前
     EventBase base;
 
-    string zk_path = conf.get("", "zk_path", "");
-    exitif(zk_path.empty(), "zk_path should be sed");
-    auto arg = new pair<EventBase*, string>(&base, zk_path);
-    zhandle_t* zh = zk_init(conf, &base, arg);
-    ExitCaller exit2([zh, arg]{ zookeeper_close(zh); delete arg; arg=NULL; if (zk_log) fclose(zk_log);zk_log = NULL; });
+    zhandle_t* zh = zk_init(conf, &base, NULL);
+    ExitCaller exit2([zh]{ zookeeper_close(zh); });
 
     Signal::signal(SIGINT, [&]{ base.exit(); });
     Signal::signal(SIGTERM, [&]{ base.exit(); });
@@ -136,5 +80,62 @@ int main(int argc, const char* argv[]) {
     base.loop();
     info("program exited");
     return 0;
+}
+
+//zk functions
+static FILE* g_zk_log;
+static EventBase* g_base;
+static string g_zk_path;
+
+void zk_node_data(int rc, const char *value, int value_len, const struct Stat *stat, const void *data) {
+    if (rc == 0) {
+        string v(value, value_len);
+        g_base->safeCall([v] { info("value %s from zk", v.c_str()); });
+    } else {
+        error("zk_node_data rc: %d value: %.*s", rc, value_len, value);
+    }
+}
+
+void zk_node_watcher(zhandle_t *zh, int type, int state, const char *path, void *ctx) {
+    int r = zoo_aget(zh, path, 1, zk_node_data, ctx);
+    exitif(r, "zoo_aget failed");
+}
+
+void zk_init_watcher(zhandle_t * zh, int type, int state,const char *path, void *ctx) {
+    info("zookeeper_init callback. type: %d state: %d", type, state);
+    //info("states: %d %d %d %d %d %d", ZOO_CREATED_EVENT
+    //    , ZOO_DELETED_EVENT, ZOO_CHANGED_EVENT, ZOO_CHILD_EVENT, ZOO_SESSION_EVENT, ZOO_NOTWATCHING_EVENT);
+    if (type == ZOO_SESSION_EVENT || type == ZOO_CHANGED_EVENT) {
+        if (state == ZOO_CONNECTED_STATE) {
+            info("connected to zookeeper successfully");
+            info("zoo_awget [%s]", g_zk_path.c_str());
+            int r = zoo_awget(zh, g_zk_path.c_str(), zk_node_watcher, g_base, zk_node_data, g_base);
+            exitif(r, "zoo_awget failed");
+        } else if (state == ZOO_EXPIRED_SESSION_STATE) {
+            info("zookeeper session expired");
+        }
+    }
+}
+zhandle_t * zk_init(Conf& conf, EventBase* base, void* arg) {
+    string zk_hosts = conf.get("", "zk_hosts", "");
+    exitif(zk_hosts.empty(), "zk_hosts should be configured");
+    g_zk_log = fdopen(Logger::getLogger().getFd(), "a");
+    g_zk_path = conf.get("", "zk_path", "");
+    if (g_zk_path.size() && g_zk_path[g_zk_path.size()-1] == '/') {
+        g_zk_path = g_zk_path.substr(0, g_zk_path.size()-1);
+    }
+    exitif(g_zk_path.empty(), "zk_path should be sed");
+    g_base = base;
+    zoo_set_log_stream(g_zk_log);
+    int loglevel = Logger::getLogger().getLogLevel();
+    if (loglevel >= Logger::LDEBUG) {
+        zoo_set_debug_level(ZOO_LOG_LEVEL_DEBUG);
+    } else {
+        zoo_set_debug_level(ZOO_LOG_LEVEL_INFO);
+    }
+    zhandle_t *zh = zookeeper_init(zk_hosts.c_str(), zk_init_watcher,
+        10*1000, 0, arg, 0);
+    exitif(zh == NULL, "zookeeper_init failed");
+    return zh;
 }
 

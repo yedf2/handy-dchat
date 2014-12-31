@@ -2,6 +2,7 @@
 #include <codec.h>
 #include <util.h>
 #include <string>
+#include <zookeeper.h>
 
 namespace handy {
 
@@ -24,4 +25,9 @@ struct ChatMsg {
     ChatMsg():type(Unknow), fromId(0), toId(0) {}
     ChatMsg(Slice line);
 };
+
+void zk_node_set_cb(int rc, const struct Stat *stat, const void *data);
+void zk_node_created(int rc, const char *value, const void *data);
+void zk_create_node(zhandle_t * zh, const char* path, std::string val);
+void zk_create_nodes(zhandle_t * zh, const char* path);
 }

@@ -12,7 +12,7 @@ SHARED_OBJS=$(SHARED_SRCS:.cc=.o)
 
 PROGRAMS = $(SOURCES:.cc=)
 
-default: $(PROGRAMS)
+default: $(PROGRAMS) router2 router3
 
 $(PROGRAMS): $(LIBFILE) $(SHARED_OBJS)
 
@@ -23,6 +23,12 @@ n:
 clean:
 	-rm -f $(PROGRAMS)
 	-rm -f *.o
+
+router2: router
+	cp -f router router2
+
+router3: router
+	cp -f router router3
 
 .cc.o:
 	$(CXX) $(CXXFLAGS) -c $< -o $@

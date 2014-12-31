@@ -56,4 +56,39 @@ ChatMsg::ChatMsg(Slice line): ChatMsg() {
     }
 }
 
+void zk_node_set_cb(int rc, const struct Stat *stat, const void *data) {
+    info("node set rc: %d version: %d", rc, stat->version);
+    exitif(rc, "zk_node_set_cb failed");
+}
+
+void zk_node_created(int rc, const char *value, const void *data) {
+    if (rc == ZNODEEXISTS) {
+        info("node %s already exists", value);
+    } else if (rc == 0) {
+        info("node %s created", value);
+        if (data) {
+            *(string*)data = value;
+        }
+    } else {
+        exitif(1, "in zk_node_created. create failed %d %s", rc, value);
+    }
+}
+
+void zk_create_node(zhandle_t * zh, const char* path, string val) {
+    info("creating node %s", path);
+    int r = zoo_acreate(zh, path, val.c_str(), val.size(),
+        &ZOO_OPEN_ACL_UNSAFE, 0, zk_node_created, NULL);
+    exitif(r, "zoo_acreate %s failed", path);
+}
+
+void zk_create_nodes(zhandle_t * zh, const char* path) {
+    auto nodes = Slice(path).split('/');
+    string cpath = "";
+    for (size_t i = 1; i < nodes.size(); i ++) {
+        cpath += "/";
+        cpath += nodes[i];
+        zk_create_node(zh, cpath.c_str(), "");
+    }
+}
+
 }
