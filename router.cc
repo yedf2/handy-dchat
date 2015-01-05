@@ -7,30 +7,53 @@
 using namespace std;
 using namespace handy;
 
+set<int> hashBuckets;
+long hashVersion;
+string serverHost;
+short port;
+
+map<long, TcpConnPtr> allConns, userRouter;
+
 zhandle_t * zk_init(Conf& conf, EventBase* base, new_hash_table_cb cb);
+
 void notify_new_hash_table(EventBase* base, string hashtable, long version) {
-    static long last_version;
-    if (last_version > version) {
-        error("version %ld less than last version %ld", version, last_version);
-        return;
-    } else if (last_version == version) {
-        info("version %ld equal to last version %ld", version, last_version);
+    exitif(hashVersion > version, "version %ld less than last version %ld", version, hashVersion);
+    if (hashVersion == version) {
+        info("version %ld equal to last version %ld", version, hashVersion);
         return;
     }
     replace(hashtable.begin(), hashtable.end(), '|', '\n');
     info("new hash table: \n%s\nlast_version: %ld -> version: %ld",
-        hashtable.c_str(), last_version, version);
-    last_version = version;
-}
+        hashtable.c_str(), hashVersion, version);
+    hashVersion = version;
 
+    hashBuckets.clear();
+    vector<Slice> buckets = Slice(hashtable).split('\n');
+    for (auto bln: buckets) {
+        vector<Slice> vs = bln.split(':');
+        if (vs[0] == serverHost && util::atoi(vs[1].begin()) == port) {
+            hashBuckets.insert(util::atoi(vs[2].begin()));
+        }
+    }
+    string allbuckets;
+    for (int buck: hashBuckets) {
+        allbuckets += util::format("%d ", buck);
+    }
+    info("buckets for this router is %s", allbuckets.c_str());
+    userRouter.clear();
+    for (auto& p: allConns) {
+        p.second->sendMsg(util::format("#%ld", hashVersion));
+    }
+}
 
 int main(int argc, const char* argv[]) {
     Conf conf = handy_app_init(argc, argv);
 
-    int port = conf.getInteger("", "port", 0);
+    port = conf.getInteger("", "port", 0);
     exitif(port <= 0, "port should be positive interger");
+    serverHost = conf.get("", "zk_server_host", "");
+    exitif(serverHost.empty(), "zk_server_host should be set");
 
-    map<long, TcpConnPtr> users; //生命周期比连接更长，必须放在Base前
     EventBase base;
 
     zhandle_t* zh = zk_init(conf, &base, notify_new_hash_table);
@@ -45,51 +68,53 @@ int main(int argc, const char* argv[]) {
         con->setCodec(new LineCodec);
         con->onState([&](const TcpConnPtr& con) {
             if (con->getState() == TcpConn::Connected) {
-                con->context<long>() = -1;
-                const char* welcome = "#comment\n<user 101>#<user 102>#hello\n<user 101>#0#hello\n";
-                con->send(welcome);
+                con->sendMsg(util::format("#%ld", hashVersion));
+                allConns[con->getChannel()->id()] = con;
             } else if (con->getState() == TcpConn::Closed) {
-                long id = con->context<long>();
-                if (id > 0) {
-                    users.erase(id);
-                }
+                allConns.erase(con->getChannel()->id());
             }
         });
         con->onMsg([&](const TcpConnPtr& con, Slice msg){
-            if (msg.size() == 0) { //忽略空消息
+            long& rversion = con->context<long>();
+            if (msg.size() && msg[0] == '#') {
+                long nver = util::atoi(msg.data()+1);
+                if (nver <= rversion) {
+                    error("bad new version %ld old version %ld", nver, rversion);
+                    con->close();
+                    return;
+                }
+                rversion = nver;
                 return;
             }
-            long& id = con->context<long>();
             ChatMsg cm(msg);
-            info("handle msg. type: %d %s", cm.type, cm.str().c_str());
-            if (cm.type == ChatMsg::Login) {
-                if (id != -1) {
-                    con->sendMsg("#login again. ignore");
-                    //error("login again for conn: %s", con->peer_.toString().c_str());
-                    return;
-                }
-                if (cm.fromId <= 0) {
-                    //error("bad fromid for conn: %s", con->peer_.toString().c_str());
-                    con->sendMsg("#bad fromid");
-                    return;
-                }
-                id = cm.fromId;
-                users[id] = con;
-            } else if (cm.type == ChatMsg::Chat) {
-                if (id == -1) {
-                    con->sendMsg("#login first.");
-                    //error("chat recv before login for conn: %s", con->peer_.toString().c_str());
-                    return;
-                }
-                if (users.find(cm.toId) == users.end()) {
-                    con->sendMsg("#user not found.");
-                    return;
+            if (cm.type == ChatMsg::Unknow) {
+                error("unknow msg: %.*s", (int)msg.size(), msg.data());
+                con->close();
+                return;
+            }
+            debug("handle msg. type: %d %s", cm.type, cm.str().c_str());
+            ChatMsg ack(ChatMsg::Ack, cm.msgId, 0, cm.fromId, "");
+            if (rversion != hashVersion) {
+                ack.data = "version unmatch, retry later";
+            } else if (cm.type == ChatMsg::Login) {
+                userRouter[cm.fromId] = con;
+                ack.data = "ok";
+            } else if (cm.type == ChatMsg::Chat || cm.type == ChatMsg::Ack) {
+                auto rp = userRouter.find(cm.toId);
+                if (rp == userRouter.end()) {
+                    ack.data = "user not found";
                 } else {
-                    users[cm.toId]->sendMsg(cm.str());
+                    rp->second->sendMsg(msg);
+                    return;
+                }
+                if (cm.type == ChatMsg::Ack) { // ignore Ack error
+                    return;
                 }
             } else if (cm.type == ChatMsg::Logout) {
-                con->close();
+                userRouter.erase(cm.fromId);
+                return;
             }
+            con->sendMsg(ack.str());
         });
         return con;
     });

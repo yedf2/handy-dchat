@@ -23,7 +23,7 @@ void dconnectTo(EventBase* base, const char* argv[], int uid, int touid) {
     });
     con->onMsg([=](const TcpConnPtr& con, Slice msg){
         ChatMsg cmsg(msg);
-        info("msg: type %d %s", cmsg.type, cmsg.str().c_str());
+        info("user %d msg: type %s %s", uid, cmsg.strType().c_str(), cmsg.str().c_str());
         if (cmsg.type == ChatMsg::Chat) {
             base->exit();
         }

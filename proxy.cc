@@ -7,21 +7,46 @@
 using namespace std;
 using namespace handy;
 
+long hashVersion;
+vector<TcpConnPtr> bucketCons;
+map<string, TcpConnPtr> addrCons;
+
+TcpConnPtr getConByUid(long uid) {
+    if (bucketCons.size() == 0) { return NULL; }
+    int bucket = uid % bucketCons.size();
+    return bucketCons[bucket];
+}
+
 zhandle_t * zk_init(Conf& conf, EventBase* base, new_hash_table_cb cb);
 void notify_new_hash_table(EventBase* base, string hashtable, long version) {
-    static long last_version;
-    info("new hash table version: %ld", version);
-    if (last_version > version) {
-        error("version %ld less than last version %ld", version, last_version);
-        return;
-    } else if (last_version == version) {
-        info("version %ld equal to last version %ld", version, last_version);
+    exitif(hashVersion > version, "version %ld less than last version %ld", version, hashVersion);
+    if (hashVersion == version) {
+        info("version %ld equal to last version %ld", version, hashVersion);
         return;
     }
     replace(hashtable.begin(), hashtable.end(), '|', '\n');
     info("new hash table: \n%s\nlast_version: %ld -> version: %ld",
-        hashtable.c_str(), last_version, version);
-    last_version = version;
+        hashtable.c_str(), hashVersion, version);
+    hashVersion = version;
+
+    vector<Slice> lns = Slice(hashtable).split('\n');
+    exitif(bucketCons.size() && bucketCons.size() != lns.size(), "hash table size changed");
+
+    bucketCons.clear();
+    vector<string> addrs;
+    set<string> seta;
+    map<string, TcpConnPtr> oldcons;
+    swap(oldcons, addrCons);
+    for (auto ln: lns) {
+        zkNode nd;
+        int r = nd.parse(ln);
+        exitif(r || nd.id != (int)addrs.size(), "bad hash table");
+        addrs.push_back(nd.server);
+        seta.insert(nd.server);
+        auto& con = addrCons[nd.server];
+        con = oldcons[nd.server];
+        bucketCons.push_back(con);
+    }
 }
 
 int main(int argc, const char* argv[]) {
@@ -45,8 +70,6 @@ int main(int argc, const char* argv[]) {
         con->onState([&](const TcpConnPtr& con) {
             if (con->getState() == TcpConn::Connected) {
                 con->context<long>() = -1;
-                const char* welcome = "#comment\n<user 101>#<user 102>#hello\n<user 101>#0#hello\n";
-                con->send(welcome);
             } else if (con->getState() == TcpConn::Closed) {
                 long id = con->context<long>();
                 if (id > 0) {
@@ -55,40 +78,29 @@ int main(int argc, const char* argv[]) {
             }
         });
         con->onMsg([&](const TcpConnPtr& con, Slice msg){
-            if (msg.size() == 0) { //忽略空消息
-                return;
-            }
             long& id = con->context<long>();
             ChatMsg cm(msg);
-            info("handle msg. type: %d %s", cm.type, cm.str().c_str());
+            ChatMsg resp(ChatMsg::Ack, cm.msgId, cm.toId, cm.fromId, "");
+            info("handle msg: %s", cm.str().c_str());
             if (cm.type == ChatMsg::Login) {
-                if (id != -1) {
-                    con->sendMsg("#login again. ignore");
-                    //error("login again for conn: %s", con->peer_.toString().c_str());
-                    return;
-                }
-                if (cm.fromId <= 0) {
-                    //error("bad fromid for conn: %s", con->peer_.toString().c_str());
-                    con->sendMsg("#bad fromid");
-                    return;
-                }
+                exitif(id != -1 || cm.fromId <= 0, "login error");
                 id = cm.fromId;
                 users[id] = con;
+                info("user %ld login ok", id);
+                resp.data = "login ok";
             } else if (cm.type == ChatMsg::Chat) {
-                if (id == -1) {
-                    con->sendMsg("#login first.");
-                    //error("chat recv before login for conn: %s", con->peer_.toString().c_str());
-                    return;
-                }
+                exitif(id < 0, "msg recved before login");
                 if (users.find(cm.toId) == users.end()) {
-                    con->sendMsg("#user not found.");
-                    return;
+                    resp.data = "user not found";
                 } else {
                     users[cm.toId]->sendMsg(cm.str());
+                    return;
                 }
             } else if (cm.type == ChatMsg::Logout) {
                 con->close();
+                return;
             }
+            con->sendMsg(resp.str());
         });
         return con;
     });

@@ -6,22 +6,18 @@
 #include <handy.h>
 
 struct ChatMsg {
-    /*
-    #...            comment message
-    101#            user101 login
-    1#101#102#hello   user101 -> user102 chat message
-    ^D              logout
-                    Empty
-    */
-    enum Type{ Unknow=0, Empty, Login, Comment, Logout, Chat, };
+    // 消息格式为
+    // <type>#<msg id>#<sender id>#<receiver id>#<msg>
+    enum Type{ Unknow=0, Login, Logout, Chat, Ack, };
     enum User { System=0, Normal=100, };
     Type type;
     long msgId, fromId, toId;
     std::string data;
     std::string str();
+    std::string strType() { static const char* ss[] = { "Unknow", "Login", "Logout", "Chat", "Ack"}; return ss[type]; }
     ChatMsg(Type type1, long msgId1, long fromId1, long toId1, handy::Slice data1):
         type(type1), msgId(msgId1), fromId(fromId1), toId(toId1), data(data1) {}
-    ChatMsg():type(Unknow), fromId(0), toId(0) {}
+    ChatMsg():type(Unknow), msgId(0),fromId(0), toId(0) {}
     ChatMsg(handy::Slice line);
 };
 
