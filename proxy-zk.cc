@@ -16,7 +16,8 @@ static new_hash_table_cb g_zk_new_hash_table_cb;
 void zk_node_data(int rc, const char *value, int value_len, const struct Stat *stat, const void *data) {
     if (rc == 0) {
         string v(value, value_len);
-        g_zk_new_hash_table_cb(g_zk_base, v, stat->version);
+        int ver = stat->version;
+        g_zk_base->safeCall([v, ver](){ g_zk_new_hash_table_cb(g_zk_base, v, ver);});
     } else {
         error("zk_node_data rc: %d value: %.*s", rc, value_len, value);
     }

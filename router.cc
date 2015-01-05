@@ -10,7 +10,6 @@ using namespace handy;
 zhandle_t * zk_init(Conf& conf, EventBase* base, new_hash_table_cb cb);
 void notify_new_hash_table(EventBase* base, string hashtable, long version) {
     static long last_version;
-    info("new hash table version: %ld", version);
     if (last_version > version) {
         error("version %ld less than last version %ld", version, last_version);
         return;

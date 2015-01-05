@@ -114,9 +114,10 @@ int zk_hash_rebuild(HashNodeArg* arg, const string& old, string* res) {
 void zk_router_node_set_cb(int rc, const struct Stat *stat, const void *data) {
     info("node set rc: %d version: %d", rc, stat->version);
     exitif(rc, "zk_node_set_cb failed");
-    string* hash_table = (string*)data;
-    g_zk_new_hash_table_cb(g_zk_base, *hash_table, stat->version);
-    delete hash_table;
+    string v = *(string*)data;
+    delete (string*)data;
+    int ver = stat->version;
+    g_zk_base->safeCall([v, ver](){ g_zk_new_hash_table_cb(g_zk_base, v, ver);});
 }
 
 void zk_router_node_data(int rc, const char *value, int value_len, const struct Stat *stat, const void *data) {
