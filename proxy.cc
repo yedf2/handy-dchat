@@ -19,16 +19,25 @@ TcpConnPtr getConByUid(long uid) {
 }
 
 void versionMatched(TcpConnPtr con, string server) {
+    con->sendMsg(util::format("#%ld", hashVersion));
+    int sended = 0;
     for (auto& uc: userConns) {
         int bucket = uc.first % bucketAddrs.size();
         if (bucketAddrs[bucket] == server) {
             ChatMsg login(ChatMsg::Login, 0, uc.first, 0, "");
-            con->sendMsg(login.str());
+            string sl = login.str();
+            info("sending login: %s", sl.c_str());
+            con->sendMsg(sl);
+            sended ++;
         }
     }
+    info("%d users login to %s", sended, server.c_str());
 }
 
+void reconnectRouter(EventBase* base);
+
 zhandle_t * zk_init(Conf& conf, EventBase* base, new_hash_table_cb cb);
+
 void notify_new_hash_table(EventBase* base, string hashtable, long version) {
     exitif(hashVersion > version, "version %ld less than last version %ld", version, hashVersion);
     if (hashVersion == version) {
@@ -54,10 +63,11 @@ void notify_new_hash_table(EventBase* base, string hashtable, long version) {
         bucketAddrs.push_back(nd.server);
         seta.insert(nd.server);
         auto& con = addrCons[nd.server] = oldcons[nd.server];
-        if (con->context<long>() == hashVersion) {
+        if (con && con->context<long>() == hashVersion) {
             versionMatched(con, nd.server);
         }
     }
+    reconnectRouter(base);
 }
 
 struct RouterCtx {
@@ -83,6 +93,7 @@ void reconnectRouter(EventBase* base) {
                 }
             });
             con->onMsg([server](TcpConnPtr con, Slice msg) {
+                info("%s handling msg: %s", con->str().c_str(), string(msg).c_str());
                 long& rversion = con->context<RouterCtx>().version;
                 if (msg.size() && msg[0] == '#') {
                     long ver = util::atoi(msg.data()+1);
@@ -94,12 +105,18 @@ void reconnectRouter(EventBase* base) {
                     return;
                 }
                 ChatMsg chat(msg);
-                if (chat.type == ChatMsg::Chat) {
+                if (chat.type == ChatMsg::Chat || chat.type == ChatMsg::Ack) {
                     auto p = userConns.find(chat.toId);
                     if (p == userConns.end()) {
+                        if (chat.type == ChatMsg::Ack) {
+                            warn("no route for ack msg %s", chat.str().c_str());
+                            return;
+                        }
                         ChatMsg res(ChatMsg::Ack, chat.msgId, 0, chat.fromId, "user not found");
+                        info("send msg %s to %s", res.str().c_str(), con->str().c_str());
                         con->sendMsg(res.str());
                     } else {
+                        info("send msg %s to %s", string(msg).c_str(), p->second->str().c_str());
                         p->second->sendMsg(msg);
                     }
                 } else {
@@ -123,7 +140,7 @@ int main(int argc, const char* argv[]) {
     Signal::signal(SIGINT, [&]{ base.exit(); });
     Signal::signal(SIGTERM, [&]{ base.exit(); });
 
-    base.runAfter(0, [&base]{ reconnectRouter(&base); }, 3000);
+    base.runAfter(3000, [&base]{ reconnectRouter(&base); }, 3000);
     TcpServer chat(&base, "", port);
     chat.onConnCreate([&]{
         TcpConnPtr con(new TcpConn);
@@ -132,6 +149,12 @@ int main(int argc, const char* argv[]) {
             if (con->getState() == TcpConn::Closed) {
                 long id = con->context<long>();
                 if (id > 0) {
+                    TcpConnPtr rcon = getConByUid(id);
+                    if (rcon) {
+                        ChatMsg logout(ChatMsg::Logout, 0, id, 0, "logout");
+                        debug("send msg %s to %s", logout.str().c_str(), rcon->str().c_str());
+                        rcon->sendMsg(logout.str().c_str());
+                    }
                     userConns.erase(id);
                 }
             }
@@ -140,25 +163,39 @@ int main(int argc, const char* argv[]) {
             long& id = con->context<long>();
             ChatMsg cm(msg);
             ChatMsg resp(ChatMsg::Ack, cm.msgId, cm.toId, cm.fromId, "");
-            info("handle msg: %s", cm.str().c_str());
+            info("%s handle msg: %s", con->str().c_str(), cm.str().c_str());
             if (cm.type == ChatMsg::Login) {
-                exitif(id != -1 || cm.fromId <= 0, "login error");
+                exitif(id != 0 || cm.fromId <= 0, "login error");
                 id = cm.fromId;
                 userConns[id] = con;
                 info("user %ld login ok", id);
                 resp.data = "login ok";
-            } else if (cm.type == ChatMsg::Chat) {
+                TcpConnPtr rcon = getConByUid(cm.toId);
+                if (!rcon) {
+                    warn("remote router not ok");
+                } else {
+                    debug("sending %s to %s", string(msg).c_str(), rcon->str().c_str());
+                    rcon->sendMsg(msg);
+                }
+            } else if (cm.type == ChatMsg::Chat || cm.type == ChatMsg::Ack) {
                 exitif(id < 0, "msg recved before login");
-                if (userConns.find(cm.toId) == userConns.end()) {
+                TcpConnPtr rcon = getConByUid(cm.toId);
+                if (!rcon) {
+                    if (cm.type == ChatMsg::Ack) {
+                        warn("no route for ack msg %s", cm.str().c_str());
+                        return;
+                    }
                     resp.data = "user not found";
                 } else {
-                    userConns[cm.toId]->sendMsg(cm.str());
+                    info("sending msg %s to %s", cm.str().c_str(), rcon->str().c_str());
+                    rcon->sendMsg(cm.str());
                     return;
                 }
             } else if (cm.type == ChatMsg::Logout) {
                 con->close();
                 return;
             }
+            info("send msg %s to %s", resp.str().c_str(), con->str().c_str());
             con->sendMsg(resp.str());
         });
         return con;

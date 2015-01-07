@@ -55,12 +55,13 @@ zhandle_t * zk_init(Conf& conf, EventBase* base, new_hash_table_cb cb) {
     exitif(g_zk_path.empty(), "zk_path should be set");
     g_zk_base = base;
     zoo_set_log_stream(g_zk_log);
-    int loglevel = Logger::getLogger().getLogLevel();
-    if (loglevel >= Logger::LDEBUG) {
-        zoo_set_debug_level(ZOO_LOG_LEVEL_DEBUG);
-    } else {
-        zoo_set_debug_level(ZOO_LOG_LEVEL_INFO);
-    }
+    //int loglevel = Logger::getLogger().getLogLevel();
+    //if (loglevel >= Logger::LDEBUG) {
+    //    zoo_set_debug_level(ZOO_LOG_LEVEL_DEBUG);
+    //} else {
+    //    zoo_set_debug_level(ZOO_LOG_LEVEL_INFO);
+    //}
+    zoo_set_debug_level(ZOO_LOG_LEVEL_WARN);
     zhandle_t *zh = zookeeper_init(zk_hosts.c_str(), zk_init_watcher,
         10*1000, 0, NULL, 0);
     exitif(zh == NULL, "zookeeper_init failed");

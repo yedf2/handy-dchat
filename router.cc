@@ -68,7 +68,9 @@ int main(int argc, const char* argv[]) {
         con->setCodec(new LineCodec);
         con->onState([&](const TcpConnPtr& con) {
             if (con->getState() == TcpConn::Connected) {
-                con->sendMsg(util::format("#%ld", hashVersion));
+                string msg = util::format("#%ld", hashVersion);
+                info("send %s to connection %ld", msg.c_str(), con->getChannel()->id());
+                con->sendMsg(msg);
                 allConns[con->getChannel()->id()] = con;
             } else if (con->getState() == TcpConn::Closed) {
                 allConns.erase(con->getChannel()->id());
@@ -92,28 +94,27 @@ int main(int argc, const char* argv[]) {
                 con->close();
                 return;
             }
-            debug("handle msg. type: %d %s", cm.type, cm.str().c_str());
+            debug("%s handle msg. %s", con->str().c_str(), cm.str().c_str());
             ChatMsg ack(ChatMsg::Ack, cm.msgId, 0, cm.fromId, "");
             if (rversion != hashVersion) {
-                ack.data = "version unmatch, retry later";
+                ack.data = util::format("rversion %ld unmatch lversion %ld, retry later", rversion, hashVersion);
             } else if (cm.type == ChatMsg::Login) {
                 userRouter[cm.fromId] = con;
-                ack.data = "ok";
+                return;
             } else if (cm.type == ChatMsg::Chat || cm.type == ChatMsg::Ack) {
                 auto rp = userRouter.find(cm.toId);
                 if (rp == userRouter.end()) {
                     ack.data = "user not found";
                 } else {
+                    info("sending msg %s to %s", cm.str().c_str(), con->str().c_str());
                     rp->second->sendMsg(msg);
-                    return;
-                }
-                if (cm.type == ChatMsg::Ack) { // ignore Ack error
                     return;
                 }
             } else if (cm.type == ChatMsg::Logout) {
                 userRouter.erase(cm.fromId);
                 return;
             }
+            info("sending msg %s to %s", ack.str().c_str(), con->str().c_str());
             con->sendMsg(ack.str());
         });
         return con;
